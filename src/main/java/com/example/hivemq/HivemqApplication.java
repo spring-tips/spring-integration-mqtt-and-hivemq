@@ -9,13 +9,16 @@ import org.eclipse.paho.client.mqttv3.logging.JSR47Logger;
 import org.eclipse.paho.client.mqttv3.logging.Logger;
 import org.eclipse.paho.client.mqttv3.logging.LoggerFactory;
 import org.eclipse.paho.client.mqttv3.spi.NetworkModuleFactory;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.integration.dsl.IntegrationFlow;
-import org.springframework.integration.dsl.IntegrationFlows;
 import org.springframework.integration.dsl.MessageChannels;
 import org.springframework.integration.handler.GenericHandler;
 import org.springframework.integration.mqtt.core.DefaultMqttPahoClientFactory;
@@ -24,40 +27,14 @@ import org.springframework.integration.mqtt.inbound.MqttPahoMessageDrivenChannel
 import org.springframework.integration.mqtt.outbound.MqttPahoMessageHandler;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageBuilder;
-import org.springframework.nativex.hint.NativeHint;
-import org.springframework.nativex.hint.ResourceHint;
-import org.springframework.nativex.hint.TypeAccess;
-import org.springframework.nativex.hint.TypeHint;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerResponse;
 
+import java.util.Map;
+
 import static org.springframework.web.reactive.function.server.RouterFunctions.route;
 
-@NativeHint(
-        types = @TypeHint(types = {
-                JSR47Logger.class, LoggerFactory.class,
-                NetworkModuleFactory.class,
-                WebSocketNetworkModuleFactory.class,
-                WebSocketSecureNetworkModuleFactory.class,
-                SSLNetworkModuleFactory.class,
-                TCPNetworkModuleFactory.class,
-                Logger.class
-        }, access = {
-                TypeAccess.DECLARED_CLASSES,
-                TypeAccess.DECLARED_CONSTRUCTORS,
-                TypeAccess.DECLARED_FIELDS,
-                TypeAccess.DECLARED_METHODS,
-        }),
-        resources = {
-                @ResourceHint(patterns = "org/eclipse/paho/client/mqttv3/logging/JSR47Logger.class"),
-                @ResourceHint(
-                        isBundle = false,
-                        patterns = "org/eclipse/paho/client/mqttv3/internal/nls/logcat.properties"),
-                @ResourceHint(
-                        isBundle = true,
-                        patterns = "org/eclipse/paho/client/mqttv3/internal/nls/messages"),
-
-        })
+@ImportRuntimeHints(HivemqApplication.MqttHints.class)
 @SpringBootApplication
 public class HivemqApplication {
 
@@ -74,6 +51,42 @@ public class HivemqApplication {
         return factory;
     }
 
+    static class MqttHints implements RuntimeHintsRegistrar {
+
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+
+            var classes = new Class<?>[]{
+                    JSR47Logger.class,
+                    LoggerFactory.class,
+                    NetworkModuleFactory.class,
+                    WebSocketNetworkModuleFactory.class,
+                    WebSocketSecureNetworkModuleFactory.class,
+                    SSLNetworkModuleFactory.class,
+                    TCPNetworkModuleFactory.class,
+                    Logger.class};
+
+            var resources = Map.of(
+                    "org/eclipse/paho/client/mqttv3/logging/JSR47Logger.class", false, //
+                    "org/eclipse/paho/client/mqttv3/internal/nls/logcat.properties", false, //
+                    "org/eclipse/paho/client/mqttv3/internal/nls/messages", true
+            );
+
+            for (var c : classes) {
+                hints.reflection().registerType(c, MemberCategory.values());
+            }
+
+            for (var entry : resources.entrySet()) {
+                var bundle = entry.getValue();
+                var path = entry.getKey();
+                if (bundle)
+                    hints.resources().registerResourceBundle(path);
+                else
+                    hints.resources().registerPattern(path);
+
+            }
+        }
+    }
 }
 
 @Configuration
@@ -94,9 +107,8 @@ class OutConfiguration {
     }
 
     @Bean
-    IntegrationFlow outboundFlow(MessageChannel out,
-                                 MqttPahoMessageHandler outboundAdapter) {
-        return IntegrationFlows
+    IntegrationFlow outboundFlow(MessageChannel out, MqttPahoMessageHandler outboundAdapter) {
+        return IntegrationFlow
                 .from(out)
                 .handle(outboundAdapter)
                 .get();
@@ -120,7 +132,7 @@ class InConfiguration {
 
     @Bean
     IntegrationFlow inboundFlow(MqttPahoMessageDrivenChannelAdapter inboundAdapter) {
-        return IntegrationFlows
+        return IntegrationFlow
                 .from(inboundAdapter)
                 .handle((GenericHandler<String>) (payload, headers) -> {
                     System.out.println("new message: " + payload);
